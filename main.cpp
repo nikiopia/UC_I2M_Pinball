@@ -39,7 +39,7 @@
 #define DROP_TARGET_PICK_PULSE_MS		(60U)
 #define DROP_TARGET_RESET_DELAY_MS		(1000U)
 
-#define BALL_HOLD_PIN					(PORTD1)	// Digital 1
+#define BALL_HOLD_PIN					(PORTD4)	// Digital 4 (Amy Change :D)
 #define BALL_HOLD_PICK_PULSE_MS			(40U)
 
 #define BALL_LAUNCH_PIN					(PORTD3)	// Digital 3
@@ -48,10 +48,26 @@
 #define DEBUG_PIN						(PORTD0)	// Digital 0
 
 #define ADC_ANALOG_INPUT_0				(PORTC0)	// A0
-#define ADC_UPDATE_MS					(20U)
+#define ADC_UPDATE_MS					(10U)
 
+#define UART_TX_PIN						(PORTD1)	// Digital 1
+#define UART_RTS_PIN					(PORTD7)	// Digital 7
 
+#define SCORE_UPDATE_MS					(100U)
 
+#define ROLLOVER_1_SCORE				(100U)
+#define ROLLOVER_2_SCORE				(100U)
+#define ROLLOVER_3_SCORE				(100U)
+#define ROLLOVER_4_SCORE				(100U)
+#define ROLLOVER_5_SCORE				(100U)
+#define ROLLOVER_6_SCORE				(100U)
+
+#define RAMP_ENTRANCE_SCORE				(100U) 
+
+#define BONUS_MODE_TIMEOUT				(10000U)
+
+#define SCORE_FLASH_DELAY				(2000U)
+#define SCORE_IDLE_VALUE				(0U)
 // ----- STRUCTURES ----- //
 
 struct IO_Input_Struct {
@@ -62,25 +78,28 @@ struct IO_Input_Struct {
 	uint8_t Rollover1     : 1;
 	uint8_t StandUpTarget : 1;
 	uint8_t Spinner       : 1;
-	uint8_t               : 2;
+	uint8_t               : 1;
+	uint8_t ProgramADC    : 1; // PROGRAMMING: Overwrite LEDMeasurements_LUT[IO_Output.EntryIndex] with ADCresult
 	
 	// Input Port B
 	uint8_t BallReturnSensor : 1;
 	uint8_t DropTarget3      : 1;
 	uint8_t DropTarget2      : 1;
 	uint8_t DropTarget1      : 1;
-	uint8_t                  : 3;
-	uint8_t ProgramADC       : 1;
+	uint8_t CycleEntry       : 1; // PROGRAMMING: Cycle through LEDMeasurements_LUT entries (With rollover)
+	uint8_t CycleIncDecDelta : 1; // PROGRAMMING: Toggle IO_Output.DeltaSelection bit
+	uint8_t DecrementEntry   : 1; // PROGRAMMING: Add delta to current entry
+	uint8_t IncrementEntry   : 1; // PROGRAMMING: Subtract delta from current entry
 	
 	// Input Port A
-	uint8_t RFlipperPB  : 1;
-	uint8_t RFlipperEOS : 1;
-	uint8_t LFlipperPB  : 1;
-	uint8_t LFlipperEOS : 1;
-	uint8_t LaunchPB    : 1;
-	uint8_t             : 1;
-	uint8_t Rollover6   : 1;
-	uint8_t Rollover5   : 1;
+	uint8_t RFlipperPB   : 1;
+	uint8_t RFlipperEOS  : 1;
+	uint8_t LFlipperPB   : 1;
+	uint8_t LFlipperEOS  : 1;
+	uint8_t LaunchPB     : 1;
+	uint8_t RampEntrance : 1;
+	uint8_t Rollover6    : 1;
+	uint8_t Rollover5    : 1;
 	
 	// Unused byte
 	uint8_t : 8;
@@ -115,7 +134,9 @@ struct IO_Output_Struct {
 	uint8_t BallLaunchState      : 2;
 	uint8_t DropTargetResetState : 2;
 	uint8_t BallHoldState        : 2;
-	uint8_t                      : 2;
+	uint8_t DropTargetReset      : 1;
+	uint8_t                      : 1;
+	
 };
 volatile IO_Output_Struct IO_Output = {0U};
 
@@ -150,16 +171,12 @@ uint8_t ballHoldCount = 0U;
 
 uint16_t LEDMeasurements_LUT[9U] = {0U};
 uint16_t LEDFill_LUT[9U];
-uint8_t LEDMeasurements_index = 0U;
-uint8_t LEDProgramming_index = 0U;
-uint8_t LEDProgramming_state = 0U;
-uint8_t deltaList_index = 0U;
 uint8_t deltaList[2U];
-
 uint8_t LED_incrementDone = 0U;
 uint8_t LED_decrementDone = 0U;
 uint8_t LED_cycleDeltaDone = 0U;
 uint8_t LED_incrementEntryDone = 0U;
+uint8_t LEDProgramming_state = 0U;
 
 uint32_t ADC_lastConversion = 0U;
 volatile uint16_t movingAvg_circBuffer[8U] = {0U};
@@ -168,8 +185,43 @@ volatile uint16_t movingAvg_sum = 0U;
 volatile uint16_t ADCresult = 0U;
 uint8_t ADC_ResultPresentFlag = 0U;
 
+uint8_t RolloverSwitchState = 0U;
+uint8_t Rollover1Count = 0U;
+uint8_t Rollover2Count = 0U;
+uint8_t Rollover3Count = 0U;
+uint8_t Rollover4Count = 0U;
+uint8_t Rollover5Count = 0U;
+uint8_t Rollover6Count = 0U;
+
+uint8_t RampState = 0U;
+uint8_t RampCount = 0U;
 
 
+
+uint32_t scoreboard_lastUpdate = 0U;
+
+// UART Transmission Variables:
+volatile uint8_t dataBuffer[6U] = {
+	0x10U,
+	0x01U,
+	0x00U,
+	0x02U,
+	0x00U,
+	0xFFU
+};
+
+volatile uint8_t bufferIndex = 0;
+
+volatile uint32_t outputScore = 0U;
+volatile uint32_t pastGameScore = 1000U;
+volatile uint32_t scoreBuffer = 0U;
+
+volatile uint8_t gameModeState = 0U;
+volatile uint32_t bonusTimeStart = 0U;
+
+volatile uint32_t lastIdleFlash = 0U;
+
+volatile uint8_t scoreFlasherState = 0;
 // ----- HELPER FUNCTIONS ----- //
 
 /*
@@ -388,8 +440,7 @@ void ResetDropTargets_FSM(uint32_t now)
 	{
 		case 0U:
 			// Waiting for reset condition / Idle
-			if (!(IO_Input.DropTarget1) && !(IO_Input.DropTarget2) &&
-				!(IO_Input.DropTarget3))
+			if (IO_Output.DropTargetReset)
 			{
 				dropTargetPulseStart = now;
 				//IO_Output.DropTargetResetState = 1;
@@ -427,6 +478,7 @@ void ResetDropTargets_FSM(uint32_t now)
 			if (IO_Input.DropTarget1 && IO_Input.DropTarget2 && IO_Input.DropTarget3)
 			{
 				IO_Output.DropTargetResetState = 0U;
+				IO_Output.DropTargetReset = 0U;
 			}
 			break;
 		default:
@@ -489,11 +541,265 @@ void BallHold_FSM(uint32_t now)
 	}
 }
 
+void updateGamemode(void)
+{
+	switch(gameModeState)
+	{
+		// Idle
+		case 0U:
+			if(!(IO_Input.LaunchPB))
+			{
+				gameModeState = 1U;
+				outputScore = 42069U;
+			}
+			break;
+		// Normal Gameplay Scoring
+		case 1U:
+			
+			if((!(IO_Input.DropTarget1) && 
+				!(IO_Input.DropTarget2) &&
+				!(IO_Input.DropTarget3) && 
+				!(IO_Output.DropTargetReset)))
+			{
+				bonusTimeStart = TIME_getTick();
+				gameModeState = 2U;
+			}
+			break;
+		
+		//Bonus mode Gameplay Scoring
+		case 2U:			
+			if(TIME_tickDiff(TIME_getTick(), bonusTimeStart) >= BONUS_MODE_TIMEOUT)
+			{
+				gameModeState = 1U;
+				IO_Output.DropTargetReset = 1U;
+			}
+			break;
+		
+		//Game Over
+		case 3U:
+			pastGameScore = outputScore;
+			gameModeState = 0U;
+			break;
+		default:
+			gameModeState = 0U;
+	}
+	
+}
 
+void updateInputCounters(void)
+{
+	//--Spinner--//
+	
+	//--Ramp--//
+	switch(RampState)
+	{
+		case 0U:
+			if(!(IO_Input.RampEntrance))
+			{
+				RampState = 1U;
+			}
+			break;
+		case 1:
+			
+			if(!(IO_Input.RampEntrance))
+			{
+				RampCount++;
+				RampState = 2U;				
+			}
+
+			break;
+		case 2U:
+			if(IO_Input.RampEntrance)
+			{
+				RampState = 0U;
+			}
+			
+			break;
+		default:
+			
+			break;
+	}
+	
+	//---Drop Targets---//
+	//TODO Talk with doug about his progress
+	
+	//---Rollover Switches---//
+	switch(RolloverSwitchState)
+	{
+		// Check if any rollover switch is non zero to go into count state
+		case 0U:
+			if (!(IO_Input.Rollover1) |
+				!(IO_Input.Rollover2) |
+				!(IO_Input.Rollover3) |
+				!(IO_Input.Rollover4) |
+				!(IO_Input.Rollover5) |
+				!(IO_Input.Rollover6) )
+			{
+				RolloverSwitchState = 1U;
+			}
+			
+			break;
+		
+		case 1U:
+			if(!(IO_Input.Rollover1))
+			{
+				Rollover1Count++;
+			}
+			if(!(IO_Input.Rollover2))
+			{
+				Rollover2Count++;
+			}
+			if(!(IO_Input.Rollover3))
+			{
+				Rollover3Count++;
+			}
+			if(!(IO_Input.Rollover4))
+			{
+				Rollover4Count++;
+			}
+			if(!(IO_Input.Rollover5))
+			{
+				Rollover5Count++;
+			}
+			if(!(IO_Input.Rollover6))
+			{
+				Rollover6Count++;
+			}
+			
+			RolloverSwitchState = 2U;
+			
+			break;
+		case 2U:
+			if ((IO_Input.Rollover1) &
+				(IO_Input.Rollover2) &
+				(IO_Input.Rollover3) &
+				(IO_Input.Rollover4) &
+				(IO_Input.Rollover5) &
+				(IO_Input.Rollover6) )
+			{
+				RolloverSwitchState = 0U;
+			}
+			
+			break;
+		default:
+			RolloverSwitchState = 0U;
+			
+			break;
+	}
+}
+
+
+void beginScoreboardUpdate()
+{
+	
+	//---Rollover Switches---//
+	
+	if(Rollover1Count)
+	{
+		scoreBuffer += (Rollover1Count * ROLLOVER_1_SCORE);
+		Rollover1Count = 0U;
+	}
+	if(Rollover2Count)
+	{
+		scoreBuffer += (Rollover2Count * ROLLOVER_2_SCORE);
+		Rollover2Count = 0U;
+	}
+	if(Rollover3Count)
+	{
+		scoreBuffer += (Rollover3Count * ROLLOVER_3_SCORE);
+		Rollover3Count = 0U;
+	}
+	if(Rollover4Count)
+	{
+		scoreBuffer += (Rollover4Count * ROLLOVER_4_SCORE);
+		Rollover4Count = 0U;
+	}
+	if(Rollover5Count)
+	{
+		scoreBuffer += (Rollover5Count * ROLLOVER_5_SCORE);
+		Rollover5Count = 0U;
+	}
+	if(Rollover6Count)
+	{
+		scoreBuffer += (Rollover6Count * ROLLOVER_6_SCORE);
+		Rollover6Count = 0U;
+	}
+	
+	//--Ramp Scoring--//
+	if(RampCount)
+	{
+		scoreBuffer += (RampCount * RAMP_ENTRANCE_SCORE);
+		RampCount = 0U;
+	}	
+	
+	switch(gameModeState)
+	{
+		case 0U:
+			//define logic to switch back and forth between 0s and previous scores
+			
+			if(TIME_tickDiff(TIME_getTick(), lastIdleFlash) >= SCORE_FLASH_DELAY)
+			{
+				lastIdleFlash = TIME_getTick();
+				if(!scoreFlasherState)
+				{
+					outputScore = pastGameScore;
+					scoreFlasherState = 1U;
+				}
+				else
+				{
+					outputScore = SCORE_IDLE_VALUE;
+					scoreFlasherState = 0U;
+				}
+			}
+			
+			
+			break;
+		//Normal Gameplay Scoring
+		case 1U:
+			outputScore += scoreBuffer;
+			scoreBuffer = 0U;
+			break;
+		
+		//Bonus Mode
+		case 2U:
+			outputScore += (scoreBuffer << 1U);
+			scoreBuffer = 0U;
+			break;
+		//Game Over
+		case 3U:
+			scoreBuffer = 0U;
+			break;
+		default:
+			scoreBuffer = 0U;
+			break;
+		
+	}
+	
+	
+	//outputScore = 0x5555U;
+	dataBuffer[2] = static_cast<uint8_t>(outputScore & 0xFF);
+	dataBuffer[4] = static_cast<uint8_t>(outputScore >> 8);
+	
+	// Enable TX complete ISR
+	UCSR0B |= (1 << TXCIE0);
+	
+	// Begin TX cycle
+	UCSR0B |= (1 << TXB80);			// 9th bit = 1 for node address
+	UDR0 = dataBuffer[0];			// TX node address
+	bufferIndex = 1;				// Setup for subsequent TXs
+	
+}
 
 // ----- SETUP / CONFIG FUNCTION ----- //
 void setup(void)
 {
+	/*
+	 * INPUT STRUCTURE:
+	 */
+	
+	uint32_t *magicPointer = (uint32_t*)(&IO_Input);
+	*magicPointer = 0xFFFFFFFFU;//CK this code
+	
 	/*
 	 * TIMER2, 1 ms Heartbeat Config:
 	 */
@@ -595,10 +901,38 @@ void setup(void)
 	deltaList[0U] = 10U;
 	deltaList[1U] = 1U;
 	
-	LEDMeasurements_LUT[0U] = 0x0200U;
-	LEDMeasurements_LUT[1U] = 0x01F0U;
-	LEDMeasurements_LUT[2U] = 0x0160U;
-	LEDMeasurements_LUT[3U] = 0x0156U;
+	LEDMeasurements_LUT[0U] = 0x01A7U;
+	LEDMeasurements_LUT[1U] = 0x0194U;
+	LEDMeasurements_LUT[2U] = 0x015CU;
+	LEDMeasurements_LUT[3U] = 0x012EU;
+	LEDMeasurements_LUT[4U] = 0x011EU;
+	LEDMeasurements_LUT[5U] = 0x0110U; // 0x0119U
+	LEDMeasurements_LUT[6U] = 0x0101U;
+	LEDMeasurements_LUT[7U] = 0x00EEU;
+	LEDMeasurements_LUT[8U] = 0x00EBU;
+	
+	IO_Output.DeltaSelection = 0U;
+	IO_Output.EntryIndex = 0U;
+	IO_Output.CurrentEntry = LEDMeasurements_LUT[0U];
+	/*
+	 * UART TX Config:
+	 */
+	
+	// Registers
+	
+	// N/A
+	UCSR0A = 0U;
+	
+	// Transmit enable, 9-bit character size
+	UCSR0B = (1U << TXEN0) | (1U << UCSZ02) | (1U << TXCIE0);
+	UCSR0C = (1U << UCSZ01) | (1U << UCSZ00);
+	
+	// 250k baud rate
+	UBRR0 = 3U;
+	
+	// Pins
+	DDRD |= (1U << UART_TX_PIN) | (1U << UART_RTS_PIN);
+	PORTD |= (1U << UART_RTS_PIN);
 	
 	// Enable global interrupts
 	sei();
@@ -613,6 +947,10 @@ int main(void)
 	setup();
 	
 	uint32_t now;
+	uint32_t startupTime = TIME_getTick();
+	
+	// Power-on delay
+	while (TIME_tickDiff(TIME_getTick(), startupTime) < 2000U);
 	
     while (1U)
 	{
@@ -690,86 +1028,27 @@ int main(void)
 					bytePointer[1U] &= ~(0x01U);
 					bytePointer[1U] |= (uint8_t)((LEDFill_LUT[i] & 0x0100U) >> 8U);
 					
-					
 					break;
 				}
 			}
 		}
 		
-		/*
-		 * TUNING ADC CONVERSION TABLE
-		 */
-		// Increment
-		if (!(IO_Input.Rollover3) && LED_incrementDone == 0U)
+		// Update Game Rule Mode
+		updateGamemode();
+		
+		// Counter Update
+		updateInputCounters();
+		
+		// Scoreboard Update
+		now = TIME_getTick();
+		if(TIME_tickDiff(now, scoreboard_lastUpdate) >= SCORE_UPDATE_MS)
 		{
-			LED_incrementDone = 1U;
-			LEDMeasurements_LUT[LEDMeasurements_index] += deltaList[deltaList_index];
-			
-			// Update display with new entry
-			IO_Output.CurrentEntry = LEDMeasurements_LUT[LEDMeasurements_index];
-		}
-		if (LED_incrementDone && IO_Input.Rollover3)
-		{
-			LED_incrementDone = 0U;
+			scoreboard_lastUpdate = now;
+			beginScoreboardUpdate();
 		}
 		
-		// Decrement
-		if (!(IO_Input.Rollover4) && LED_decrementDone == 0U)
-		{
-			LED_decrementDone = 1U;
-			LEDMeasurements_LUT[LEDMeasurements_index] -= deltaList[deltaList_index];
-			
-			// Update display with new entry
-			IO_Output.CurrentEntry = LEDMeasurements_LUT[LEDMeasurements_index];
-		}
-		if (LED_decrementDone && IO_Input.Rollover4)
-		{
-			LED_decrementDone = 0U;
-		}
 		
-		// Cycle delta: 10, 1
-		if (!(IO_Input.Rollover5) && LED_cycleDeltaDone == 0U)
-		{
-			LED_cycleDeltaDone = 1U;
-			deltaList_index ^= 0x01U;
-			
-			// Show new delta
-			IO_Output.DeltaSelection = deltaList_index;
-		}
-		if (LED_cycleDeltaDone && IO_Input.Rollover5)
-		{
-			LED_cycleDeltaDone = 0U;
-		}
-		
-		// Increment entry
-		if (!(IO_Input.Rollover6) && LED_incrementEntryDone == 0U)
-		{
-			LED_incrementEntryDone = 1U;
-			LEDMeasurements_index++;
-			if (LEDMeasurements_index >= 9U)
-				LEDMeasurements_index = 0U;
-			
-			// Show new entry and index
-			IO_Output.EntryIndex = LEDMeasurements_index;
-			IO_Output.CurrentEntry = LEDMeasurements_LUT[LEDMeasurements_index];
-		}
-		if (LED_incrementEntryDone && IO_Input.Rollover6)
-		{
-			LED_incrementEntryDone = 0U;
-		}
-		
-		if (!(IO_Input.ProgramADC) && LEDProgramming_state == 0U)
-		{
-			LEDProgramming_state = 1U;
-			
-			LEDMeasurements_LUT[LEDMeasurements_index] = ADCresult;
-			
-			IO_Output.CurrentEntry = LEDMeasurements_LUT[LEDMeasurements_index];
-		}
-		if (LEDProgramming_state && IO_Input.ProgramADC)
-		{
-			LEDProgramming_state = 0U;
-		}
+
 		
 		// Debug output
 		PORTD ^= (1U << DEBUG_PIN);
@@ -848,4 +1127,21 @@ ISR(ADC_vect)
 	
 	ADC_ResultPresentFlag = FLAG_ON;
 }
+
+ISR(USART_TX_vect)
+{
+	if (bufferIndex < 5U)
+	{
+		UCSR0B &= ~(1U << TXB80);	// Clear 9th bit
+	}
+	else
+	{
+		UCSR0B |= (1U << TXB80);		// Set 9th bit for stop
+		UCSR0B &= ~(1U << TXCIE0);	// Disable TX complete ISR
+	}
+	
+	UDR0 = dataBuffer[bufferIndex];
+	bufferIndex++;
+}
+
 
