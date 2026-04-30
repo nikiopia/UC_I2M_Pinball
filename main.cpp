@@ -36,7 +36,7 @@
 #define FLIPPER_RIGHT_OC0B				(PORTD5)	// Digital 5
 
 #define DROP_TARGET_RESET_PIN			(PORTD2)	// Digital 2
-#define DROP_TARGET_PICK_PULSE_MS		(60U)
+#define DROP_TARGET_PICK_PULSE_MS		(500U)
 #define DROP_TARGET_RESET_DELAY_MS		(1000U)
 
 #define BALL_HOLD_PIN					(PORTD4)	// Digital 4 (Amy Change :D)
@@ -82,11 +82,11 @@ struct IO_Input_Struct {
 	uint8_t ProgramADC    : 1; // PROGRAMMING: Overwrite LEDMeasurements_LUT[IO_Output.EntryIndex] with ADCresult
 	
 	// Input Port B
-	uint8_t BallReturnSensor : 1;
+	uint8_t RampEntrance : 1;
 	uint8_t DropTarget3      : 1;
 	uint8_t DropTarget2      : 1;
 	uint8_t DropTarget1      : 1;
-	uint8_t CycleEntry       : 1; // PROGRAMMING: Cycle through LEDMeasurements_LUT entries (With rollover)
+	uint8_t BallReturnSensor : 1; // PROGRAMMING: Cycle through LEDMeasurements_LUT entries (With rollover)
 	uint8_t CycleIncDecDelta : 1; // PROGRAMMING: Toggle IO_Output.DeltaSelection bit
 	uint8_t DecrementEntry   : 1; // PROGRAMMING: Add delta to current entry
 	uint8_t IncrementEntry   : 1; // PROGRAMMING: Subtract delta from current entry
@@ -97,7 +97,7 @@ struct IO_Input_Struct {
 	uint8_t LFlipperPB   : 1;
 	uint8_t LFlipperEOS  : 1;
 	uint8_t LaunchPB     : 1;
-	uint8_t RampEntrance : 1;
+	uint8_t  : 1;
 	uint8_t Rollover6    : 1;
 	uint8_t Rollover5    : 1;
 	
@@ -172,7 +172,7 @@ uint8_t dropTarget1State = 0U;
 uint8_t dropTarget2State = 0U;
 uint8_t dropTarget3State = 0U;
 uint8_t dropTargetBonusCount = 0U;
-uint8_t dropTargetResetDelayStart = 0U;
+uint32_t dropTargetResetDelayStart = 0U;
 
 uint32_t ballHoldStart = 0U;
 uint8_t ballHoldCount = 0U;
@@ -204,7 +204,7 @@ uint8_t Rollover6Count = 0U;
 uint8_t RampState = 0U;
 uint8_t RampCount = 0U;
 
-
+uint32_t bonusModeStartDelay = 0U;
 
 uint32_t scoreboard_lastUpdate = 0U;
 
@@ -221,7 +221,7 @@ volatile uint8_t dataBuffer[6U] = {
 volatile uint8_t bufferIndex = 0;
 
 volatile uint32_t outputScore = 0U;
-volatile uint32_t pastGameScore = 1000U;
+volatile uint32_t pastGameScore = 1111U;
 volatile uint32_t scoreBuffer = 0U;
 
 volatile uint8_t gameModeState = 0U;
@@ -447,24 +447,6 @@ void DropTargets_FSM(uint32_t now)
 	switch (IO_Output.DropTargetState)
 	{
 		case 0U:
-			/*
-			// Waiting for reset condition / Idle
-			if (IO_Output.DropTargetReset)
-			{
-				dropTargetPulseStart = now;
-				//IO_Output.DropTargetResetState = 1;
-			}
-			
-			if (dropTargetPulseStart != 0U)
-			{
-				if (TIME_tickDiff(now, dropTargetPulseStart) >= DROP_TARGET_RESET_DELAY_MS)
-				{
-					dropTargetPulseStart = 0U;
-					IO_Output.DropTargetResetState = 1U;
-				}
-			}
-			*/
-			
 			if (!(IO_Input.DropTarget1) && dropTarget1State == 0U)
 			{
 				dropTarget1State = 1U;
@@ -487,47 +469,57 @@ void DropTargets_FSM(uint32_t now)
 			{
 				IO_Output.DropTargetState = 1U;
 				IO_Output.DropTargetsDown = 1U; // CHLOE
-				dropTargetPulseStart = 0U;
+				//dropTargetPulseStart = 0U;
 				dropTargetResetDelayStart = 0U;
 				dropTargetBonusCount = 50U;
 			}
 			break;
 		case 1U:
-			// Pick
+			// Wait state
 			if (dropTargetResetDelayStart == 0U)
 			{
-				dropTargetResetDelayStart = now;
+				dropTargetResetDelayStart = TIME_getTick();
+				//IO_Output.CurrentEntry = 0U;
 			}
-			else if (TIME_tickDiff(now, dropTargetResetDelayStart) >= 3000U)
+			else if (TIME_tickDiff(TIME_getTick(), dropTargetResetDelayStart) >= 3000U)
 			{
-				if (dropTargetPulseStart == 0U)
-				{
-					dropTargetPulseStart = now;
-					
-					// Set pin
-					PORTD |= (1U << DROP_TARGET_RESET_PIN);
-				}
-				else if (TIME_tickDiff(now, dropTargetPulseStart) >= DROP_TARGET_PICK_PULSE_MS)
-				{
-					dropTargetPulseStart = 0U;
-					dropTargetResetDelayStart = 0U;
-					IO_Output.DropTargetState = 2U;
-					
-					dropTarget1State = 0U;
-					dropTarget2State = 0U;
-					dropTarget3State = 0U;
-					
-					// Reset pin
-					PORTD &= ~(1U << DROP_TARGET_RESET_PIN);
-				}
+				dropTargetResetDelayStart = 0U;
+				dropTargetPulseStart = 0U;
+				IO_Output.DropTargetState = 2U;
+				//IO_Output.CurrentEntry = 0xFFU;
 			}
 			break;
 		case 2U:
+			// Pick
+			if (dropTargetPulseStart == 0U)
+			{
+				dropTargetPulseStart = now;
+					
+				// Set pin
+				PORTD |= (1U << DROP_TARGET_RESET_PIN);
+			}
+			else if (TIME_tickDiff(now, dropTargetPulseStart) >= DROP_TARGET_PICK_PULSE_MS)
+			{
+				dropTargetPulseStart = 0U;
+				//dropTargetResetDelayStart = 0U;
+				IO_Output.DropTargetState = 3U;
+					
+				dropTarget1State = 0U;
+				dropTarget2State = 0U;
+				dropTarget3State = 0U;
+					
+				// Reset pin
+				PORTD &= ~(1U << DROP_TARGET_RESET_PIN);
+			}
+			break;
+		case 3U:
 			// Pulse complete, wait for switches reset
 			if (IO_Input.DropTarget1 && IO_Input.DropTarget2 && IO_Input.DropTarget3)
 			{
 				IO_Output.DropTargetState = 0U;
 				IO_Output.DropTargetsDown = 0U; // CHLOE
+				dropTargetPulseStart = 0U;
+				dropTargetResetDelayStart = 0U;
 			}
 			break;
 		default:
@@ -542,6 +534,7 @@ void BallHold_FSM(uint32_t now)
 	{
 		case 0U:
 			// Idle state
+			
 			if (!(IO_Input.Rollover2))
 			{
 				IO_Output.BallHoldState = 1U;
@@ -599,7 +592,8 @@ void updateGamemode(void)
 			if(!(IO_Input.LaunchPB) && IO_Input.BallReturnSensor)
 			{
 				gameModeState = 1U;
-				outputScore = 42069U;
+				//outputScore = 0;
+				//scoreBuffer = 0;
 			}
 			break;
 		// Normal Gameplay Scoring
@@ -614,7 +608,7 @@ void updateGamemode(void)
 			*/ // CHLOE
 			if (IO_Output.DropTargetsDown)
 			{
-				bonusTimeStart = TIME_getTick();
+				//bonusTimeStart = TIME_getTick();
 				gameModeState = 2U;
 			}
 			
@@ -625,17 +619,34 @@ void updateGamemode(void)
 			break;
 		
 		//Bonus mode Gameplay Scoring
-		case 2U:			
-			if(TIME_tickDiff(TIME_getTick(), bonusTimeStart) >= BONUS_MODE_TIMEOUT)
+		case 2U:
+			if (bonusModeStartDelay == 0U)
 			{
-				gameModeState = 1U;
-				//IO_Output.DropTargetReset = 1U; // CHLOE
+				bonusModeStartDelay = TIME_getTick();
+			}
+			else if (TIME_tickDiff(TIME_getTick(), bonusModeStartDelay) >= 2000U)
+			{
+				if (bonusTimeStart == 0U)
+				{
+					bonusTimeStart = TIME_getTick();
+				}
+				
+				if(TIME_tickDiff(TIME_getTick(), bonusTimeStart) >= BONUS_MODE_TIMEOUT)
+				{
+					gameModeState = 1U;
+					bonusModeStartDelay = 0U;
+					bonusTimeStart = 0U;
+					//IO_Output.DropTargetReset = 1U; // CHLOE
+				}
+				
+				if(!(IO_Input.BallReturnSensor))
+				{
+					gameModeState = 3U;
+					bonusModeStartDelay = 0U;
+					bonusTimeStart = 0U;
+				}
 			}
 			
-			if(!(IO_Input.BallReturnSensor))
-			{
-			 gameModeState = 3U;	
-			}
 			break;
 			
 			
@@ -1078,8 +1089,8 @@ int main(void)
 		/*
 		 * BALL HOLD CONTROL
 		 */
-		now = TIME_getTick();
-		BallHold_FSM(now);
+		//now = TIME_getTick();
+		//BallHold_FSM(now);
 		
 		/*
 		 * ADC CONTROL
