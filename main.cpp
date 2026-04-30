@@ -55,14 +55,14 @@
 
 #define SCORE_UPDATE_MS					(100U)
 
-#define ROLLOVER_1_SCORE				(100U)
-#define ROLLOVER_2_SCORE				(100U)
-#define ROLLOVER_3_SCORE				(100U)
-#define ROLLOVER_4_SCORE				(100U)
-#define ROLLOVER_5_SCORE				(100U)
-#define ROLLOVER_6_SCORE				(100U)
+#define ROLLOVER_1_SCORE				(10U)
+#define ROLLOVER_2_SCORE				(10U)
+#define ROLLOVER_3_SCORE				(10U)
+#define ROLLOVER_4_SCORE				(10U)
+#define ROLLOVER_5_SCORE				(10U)
+#define ROLLOVER_6_SCORE				(10U)
 
-#define RAMP_ENTRANCE_SCORE				(100U) 
+#define RAMP_ENTRANCE_SCORE				(10U) 
 
 #define BONUS_MODE_TIMEOUT				(10000U)
 
@@ -596,7 +596,7 @@ void updateGamemode(void)
 	{
 		// Idle
 		case 0U:
-			if(!(IO_Input.LaunchPB))
+			if(!(IO_Input.LaunchPB) && IO_Input.BallReturnSensor)
 			{
 				gameModeState = 1U;
 				outputScore = 42069U;
@@ -617,6 +617,11 @@ void updateGamemode(void)
 				bonusTimeStart = TIME_getTick();
 				gameModeState = 2U;
 			}
+			
+			if(!(IO_Input.BallReturnSensor))
+			{
+				gameModeState = 3U;
+			}
 			break;
 		
 		//Bonus mode Gameplay Scoring
@@ -626,9 +631,14 @@ void updateGamemode(void)
 				gameModeState = 1U;
 				//IO_Output.DropTargetReset = 1U; // CHLOE
 			}
+			
+			if(!(IO_Input.BallReturnSensor))
+			{
+			 gameModeState = 3U;	
+			}
 			break;
-		
-		//Game Over
+			
+			
 		case 3U:
 			pastGameScore = outputScore;
 			gameModeState = 0U;
