@@ -132,9 +132,9 @@ struct IO_Output_Struct {
 	
 	// Control Byte
 	uint8_t BallLaunchState      : 2;
-	uint8_t DropTargetResetState : 2;
+	uint8_t DropTargetState      : 2;
 	uint8_t BallHoldState        : 2;
-	uint8_t DropTargetReset      : 1;
+	uint8_t DropTargetsDown      : 1;
 	uint8_t                      : 1;
 	
 };
@@ -165,6 +165,14 @@ uint32_t ballLaunchStart = 0U;
 uint32_t IO_lastUpdate = 0U;
 
 uint32_t dropTargetPulseStart = 0U;
+uint8_t dropTarget1Count = 0U;
+uint8_t dropTarget2Count = 0U;
+uint8_t dropTarget3Count = 0U;
+uint8_t dropTarget1State = 0U;
+uint8_t dropTarget2State = 0U;
+uint8_t dropTarget3State = 0U;
+uint8_t dropTargetBonusCount = 0U;
+uint8_t dropTargetResetDelayStart = 0U;
 
 uint32_t ballHoldStart = 0U;
 uint8_t ballHoldCount = 0U;
@@ -434,11 +442,12 @@ void IO_Update(uint32_t now)
 }
 
 
-void ResetDropTargets_FSM(uint32_t now)
+void DropTargets_FSM(uint32_t now)
 {
-	switch (IO_Output.DropTargetResetState)
+	switch (IO_Output.DropTargetState)
 	{
 		case 0U:
+			/*
 			// Waiting for reset condition / Idle
 			if (IO_Output.DropTargetReset)
 			{
@@ -454,31 +463,71 @@ void ResetDropTargets_FSM(uint32_t now)
 					IO_Output.DropTargetResetState = 1U;
 				}
 			}
+			*/
+			
+			if (!(IO_Input.DropTarget1) && dropTarget1State == 0U)
+			{
+				dropTarget1State = 1U;
+				dropTarget1Count = 10U;
+			}
+			
+			if (!(IO_Input.DropTarget2) && dropTarget2State == 0U)
+			{
+				dropTarget2State = 1U;
+				dropTarget2Count = 10U;
+			}
+			
+			if (!(IO_Input.DropTarget3) && dropTarget3State == 0U)
+			{
+				dropTarget3State = 1U;
+				dropTarget3Count = 10U;
+			}
+			
+			if (dropTarget1State && dropTarget2State && dropTarget3State)
+			{
+				IO_Output.DropTargetState = 1U;
+				IO_Output.DropTargetsDown = 1U; // CHLOE
+				dropTargetPulseStart = 0U;
+				dropTargetResetDelayStart = 0U;
+				dropTargetBonusCount = 50U;
+			}
 			break;
 		case 1U:
 			// Pick
-			if (dropTargetPulseStart == 0U)
+			if (dropTargetResetDelayStart == 0U)
 			{
-				dropTargetPulseStart = now;
-			
-				// Set pin
-				PORTD |= (1U << DROP_TARGET_RESET_PIN);
+				dropTargetResetDelayStart = now;
 			}
-			else if (TIME_tickDiff(now, dropTargetPulseStart) >= DROP_TARGET_PICK_PULSE_MS)
+			else if (TIME_tickDiff(now, dropTargetResetDelayStart) >= 3000U)
 			{
-				dropTargetPulseStart = 0U;
-				IO_Output.DropTargetResetState = 2U;
-			
-				// Reset pin
-				PORTD &= ~(1U << DROP_TARGET_RESET_PIN);
+				if (dropTargetPulseStart == 0U)
+				{
+					dropTargetPulseStart = now;
+					
+					// Set pin
+					PORTD |= (1U << DROP_TARGET_RESET_PIN);
+				}
+				else if (TIME_tickDiff(now, dropTargetPulseStart) >= DROP_TARGET_PICK_PULSE_MS)
+				{
+					dropTargetPulseStart = 0U;
+					dropTargetResetDelayStart = 0U;
+					IO_Output.DropTargetState = 2U;
+					
+					dropTarget1State = 0U;
+					dropTarget2State = 0U;
+					dropTarget3State = 0U;
+					
+					// Reset pin
+					PORTD &= ~(1U << DROP_TARGET_RESET_PIN);
+				}
 			}
 			break;
 		case 2U:
 			// Pulse complete, wait for switches reset
 			if (IO_Input.DropTarget1 && IO_Input.DropTarget2 && IO_Input.DropTarget3)
 			{
-				IO_Output.DropTargetResetState = 0U;
-				IO_Output.DropTargetReset = 0U;
+				IO_Output.DropTargetState = 0U;
+				IO_Output.DropTargetsDown = 0U; // CHLOE
 			}
 			break;
 		default:
@@ -556,10 +605,14 @@ void updateGamemode(void)
 		// Normal Gameplay Scoring
 		case 1U:
 			
+			/*
 			if((!(IO_Input.DropTarget1) && 
 				!(IO_Input.DropTarget2) &&
 				!(IO_Input.DropTarget3) && 
 				!(IO_Output.DropTargetReset)))
+			{
+			*/ // CHLOE
+			if (IO_Output.DropTargetsDown)
 			{
 				bonusTimeStart = TIME_getTick();
 				gameModeState = 2U;
@@ -571,7 +624,7 @@ void updateGamemode(void)
 			if(TIME_tickDiff(TIME_getTick(), bonusTimeStart) >= BONUS_MODE_TIMEOUT)
 			{
 				gameModeState = 1U;
-				IO_Output.DropTargetReset = 1U;
+				//IO_Output.DropTargetReset = 1U; // CHLOE
 			}
 			break;
 		
@@ -600,20 +653,17 @@ void updateInputCounters(void)
 			}
 			break;
 		case 1:
-			
 			if(!(IO_Input.RampEntrance))
 			{
 				RampCount++;
 				RampState = 2U;				
 			}
-
 			break;
 		case 2U:
 			if(IO_Input.RampEntrance)
 			{
 				RampState = 0U;
 			}
-			
 			break;
 		default:
 			
@@ -723,6 +773,28 @@ void beginScoreboardUpdate()
 	{
 		scoreBuffer += (Rollover6Count * ROLLOVER_6_SCORE);
 		Rollover6Count = 0U;
+	}
+	
+	// ----- DROP TARGETS ----- //
+	if (dropTarget1Count)
+	{
+		scoreBuffer += dropTarget1Count;
+		dropTarget1Count = 0U;
+	}
+	if (dropTarget2Count)
+	{
+		scoreBuffer += dropTarget2Count;
+		dropTarget2Count = 0U;
+	}
+	if (dropTarget3Count)
+	{
+		scoreBuffer += dropTarget3Count;
+		dropTarget3Count = 0U;
+	}
+	if (dropTargetBonusCount)
+	{
+		scoreBuffer += dropTargetBonusCount;
+		dropTargetBonusCount = 0U;
 	}
 	
 	//--Ramp Scoring--//
@@ -988,10 +1060,10 @@ int main(void)
 		BallLaunch_FSM(now);
 		
 		/*
-		 * DROP TARGET RESET CONTROL
+		 * DROP TARGET CONTROL
 		 */
 		now = TIME_getTick();
-		ResetDropTargets_FSM(now);
+		DropTargets_FSM(now);
 		
 		/*
 		 * BALL HOLD CONTROL
